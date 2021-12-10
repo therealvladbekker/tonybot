@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from flask import Flask, request, Response, jsonify
 from slackeventsapi  import SlackEventAdapter
 import requests
+import threading
 
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -19,6 +20,13 @@ slack_event_adapter = SlackEventAdapter(os.environ['SIGNING_SECRET'], '/slack/ev
 client = slack.WebClient(token=os.environ['SLACK_TOKEN'])
 BOT_ID = client.api_call("auth.test")['user_id']
 bearertoken = os.environ['BEARER_TOKEN']
+
+def pp_json(json_thing, sort=False, indents=4):
+    if type(json_thing) is str:
+        return str(json.dumps(json.loads(json_thing), sort_keys=sort, indent=indents))
+    else:
+        return str(json.dumps(json_thing, sort_keys=sort, indent=indents))
+    return None
 
 def verify_request(request):
     SIGNING_SECRET = os.environ['SIGNING_SECRET']
@@ -31,7 +39,7 @@ def verify_request(request):
     if (int(time.time()) - int(slack_request_timestamp)) > 60:
         print("Verification failed. Request is out of date.")
         return False
-    # Create a basestring by concatenating the version, the request
+    # Create a basestring by concatenating the version, the request  
       #timestamp, and the request body
     basestring = f"v0:{slack_request_timestamp}:{request_body}".encode("utf-8")
     # Hash the basestring using your signing secret, take the hex digest, and prefix with the version number
@@ -45,16 +53,44 @@ def verify_request(request):
         print("Verification failed. Signature invalid.")
         return False
 
+def getNetworkFromJarvis(network, url, bearertoken):
+    json_header = {}
+    json_header['Authorization'] = bearertoken
+    json_header['Accept'] = 'application/json'
+    json_header['Content-Type'] = 'application/json'
+    
+    #data_derived = {"customerId":tenant}
+    data_derived = '{"networkId": ' + '"' + network + '"}'
+    response = requests.post(url, headers=json_header, data=data_derived)
+    if response.status_code == 200:
+        return True, response.json()
+    else:
+        return False, f'Error: {response.text} {response.status_code}'
+
+def getFromJarvis(tenant, url, bearertoken):
+    json_header = {}
+    json_header['Authorization'] = bearertoken
+    json_header['Accept'] = 'application/json'
+    json_header['Content-Type'] = 'application/json'
+    
+    #data_derived = {"customerId":tenant}
+    data_derived = '{"customerId": ' + '"' + tenant + '"}'
+    response = requests.post(url, headers=json_header, data=data_derived)
+    if response.status_code == 200:
+        return True, response.json()
+    else:
+        return False, f'Error: {response.text} {response.status_code}'
+
 def getAccountInfoJarvis(tenant):
     url = 'https://api.perimeter81.com/api/jarvis/customer/header'
     json_header = {}
     json_header['Authorization'] = bearertoken
     json_header['Accept'] = 'application/json'
     json_header['Content-Type'] = 'application/json'
-    data_derived = {"customerId":tenant}
 
+    data_derived = '{"customerId": ' + '"' + tenant + '"}'
     response = requests.post(url, headers=json_header, data=data_derived)
-    print(response)
+    #print(response)
     return Response(), 200
 
 @slack_event_adapter.on('message')
@@ -78,6 +114,107 @@ def whoami():
 	client.chat_postMessage(channel=channel_id, text=text)
 	return Response(), 200
 
+
+@app.route('/slow', methods=['POST'])
+def slow():
+    time.sleep(5)
+    return Response(),200
+
+def whois_internal(tenant,channel_id, return_url):
+    """function for doing the actual work in a thread"""
+
+    # URLS
+    url = 'https://api.perimeter81.com/api/jarvis/customer/header'
+    general_url = 'https://api.perimeter81.com/api/jarvis/customer/general'
+    platform_url = 'https://api.perimeter81.com/api/jarvis/customer/platform'
+    platform_networks_list_url = 'https://api.perimeter81.com/api/jarvis/customer/platform/networks/list'
+    more_url = 'https://api.perimeter81.com/api/jarvis/customer/platform/network/more'
+    environment_url = 'https://api.perimeter81.com/api/jarvis/customer/environment'
+
+    status, rpcjson = getFromJarvis(tenant, url, bearertoken)
+    if not status:
+        client.chat_postMessage(channel=channel_id, text=rpcjson)
+
+    status, rpcjson_general = getFromJarvis(tenant, general_url, bearertoken)
+    if not status:
+        client.chat_postMessage(channel=channel_id, text=rpcjson_general)
+
+    status, rpcjson_platform = getFromJarvis(tenant, platform_url, bearertoken)
+    if not status:
+        client.chat_postMessage(channel=channel_id, text=rpcjson_platform)
+
+    status, rpcjson_platform_networks_list = getFromJarvis(tenant, platform_networks_list_url, bearertoken)
+    if not status:
+        client.chat_postMessage(channel=channel_id, text=rpcjson_platform_network_list)
+
+    status, rpcjson_customer_environment = getFromJarvis(tenant, environment_url, bearertoken)
+    if not status:
+        client.chat_postMessage(channel=channel_id, text=rpcjson_customer_environment)
+
+    # print(rpcjson_platform_networks_list)
+
+    # print(rpcjson['statusCode'])
+    final_slack_message = ''
+    line = ''
+    networks_one_message = ''
+    tunnels_one_message = ''
+    rpcjson_output = ''
+    rpcjson_output += "If we can't protect the Earth, you can be damn well sure we'll avenge it! " + "\n"
+    rpcjson_output += "You are requesting information regarding account: " + tenant + "\n"
+    # print(rpcjson['body'].items())
+    rpcjson_output += " " + "\n"
+    rpcjson_output += '\n'.join(f'{k} : {v}' for k, v in rpcjson['body'].items())
+    # rpcjson_output += '\n'.join(f'{k} : {v}' for k,v in rpcjson['body'].items() if k in ['companyName', 'accountManager', 'customerSuccessEngineer', 'country', 'plan'])
+
+    # This chat post is for everything under rpcjson (regular headers page)
+
+    #Do environment page next
+
+    final_slack_message += rpcjson_output + "\n"
+
+    environment_output = ''
+    environment_output += '\n'.join(f'{k} : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True )
+
+    final_slack_message += environment_output + "\n"
+
+    line += "Company Size: " + rpcjson['body']['companySize'] + "\n"
+    line += "Country: " + rpcjson['body']['country'] + "\n"
+    line += "Plan: " + rpcjson['body']['plan'] + "\n"
+    line += "Salesforce: " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + rpcjson['body'][
+        'salesforceAccountId'] + "/view" + "\n"
+    line += "Workspace: " + rpcjson['body']['workspace'] + "\n"
+    line += "ARR: " + str(rpcjson_general['body']['arr']) + "\n"
+    line += "Active Members: " + str(rpcjson_platform['body']['team']['members']) + "\n"
+    network_ids = ''
+    network_attributes = ''
+    tunnels_id = ''
+    network_map = ''
+
+    for network_stanza in rpcjson_platform_networks_list['body']['networks']:
+        network_map += "Network: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(f'( {k} : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
+
+        status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'], more_url, bearertoken)
+        for region in rpcjson_platform_network_more['body']['regions']:
+            network_map += " ¬ " + "Region: " + region['name'] + "\n"
+            for instance in region['instances']:
+                network_map += "   ¬ " + "Instance: " + instance['ip'] + " " + region['provider']['type'] + " " + \
+                               region['provider']['region'] + "\n"
+                for tunnel in instance['tunnels']:
+                    if tunnel['type'] == "ipsec":
+                        network_map += "     ¬ " + "Tunnel: " + tunnel['interfaceName'] + " " + instance['ip'] + str(
+                            tunnel['leftSubnets']) + " <> " + str(tunnel['rightSubnets']) + " " + tunnel[
+                                           'right'] + " " + tunnel['type'] + "\n"
+                    if tunnel['type'] == "connector":
+                        network_map += "     ¬ " + "Tunnel: " + tunnel['interfaceName'] + " " + instance['ip'] + " " + \
+                                       rpcjson_platform_network_more['body']['subnet'] + " <> " + str(
+                            tunnel['leftAllowedIP']) + " " + tunnel['leftEndpoint'] + " " + tunnel['type'] + "\n"
+                    if tunnel['type'] == "openvpn":
+                        network_map += "     ¬ " + "Tunnel: " + tunnel['interfaceName'] + " " + tunnel['type'] + "\n"
+        network_map += '\n'  # needed for formatting
+
+    final_slack_message += network_map + "\n"
+    client.chat_postMessage(channel=channel_id, text=final_slack_message)
+
 @app.route('/whois', methods=['POST'])
 def whois():
         if not verify_request(request):
@@ -85,72 +222,10 @@ def whois():
         data = request.form
         tenant = data.get('text')
         channel_id = data.get('channel_id')
-
-        #URLS
-        url = 'https://api.perimeter81.com/api/jarvis/customer/header'
-        general_url = 'https://api.perimeter81.com/api/jarvis/customer/general'
-        platform_url = 'https://api.perimeter81.com/api/jarvis/customer/platform'
-        platform_networks_list_url = 'https://api.perimeter81.com/api/jarvis/customer/platform/networks/list'
-
-        json_header = {}
-        json_header['Authorization'] = bearertoken
-        json_header['Accept'] = 'application/json'
-        json_header['Content-Type'] = 'application/json'
-        json_header['Host'] = 'api.perimeter81.com'
-        json_header['Content-Length'] = '1000'
-        data_derived = '{"customerId"' + ":" + '"' + tenant + '"}'
-        response = requests.post(url, headers=json_header, data=data_derived)
-        rpc = response.content.decode("utf-8")
-        rpcjson = json.loads(rpc)
-
-        response_general = requests.post(general_url, headers=json_header, data=data_derived)
-        rpc_general = response_general.content.decode("utf-8")
-        rpcjson_general = json.loads(rpc_general)
-
-        response_platform = requests.post(platform_url, headers=json_header, data=data_derived)
-        rpc_platform = response_platform.content.decode("utf-8")
-        rpcjson_platform = json.loads(rpc_platform)
-
-        response_platform_networks_list = requests.post(platform_networks_list_url, headers=json_header, data=data_derived)
-        rpc_platform_networks_list = response_platform_networks_list.content.decode("utf-8")
-        rpcjson_platform_networks_list = json.loads(rpc_platform_networks_list)
-        #print(rpcjson_platform_networks_list)
-        print(rpcjson['statusCode'])
-
-        networks_one_message = ''
-        tunnels_one_message = ''
-        line = ''
-        #line += "You are requesting information regarding account: " + tenant + "\n"
-        line += "If we can't protect the Earth, you can be damn well sure we'll avenge it! " + "\n"
-        line += "Let's start with:  " + tenant + "\n"
-        line += "Status Code: " + str(rpcjson['statusCode']) + "\n"
-        if rpcjson['statusCode'] == 200:
-            line += "Company Name: " + rpcjson['body']['companyName'] + "\n"
-            line += "Account Manager: " + rpcjson['body']['accountManager']  + "\n"
-            line += "Customer Success Engineer: " + rpcjson['body']['customerSuccessEngineer'] + "\n"
-            line += "Company Size: " + rpcjson['body']['companySize'] + "\n"
-            line += "Country: " + rpcjson['body']['country'] + "\n"
-            line += "Plan: " + rpcjson['body']['plan'] + "\n"
-            line += "Salesforce: " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + rpcjson['body']['salesforceAccountId'] + "/view" + "\n"
-            line += "Workspace: " + rpcjson['body']['workspace'] + "\n"
-            line += "ARR: " + str(rpcjson_general['body']['arr']) + "\n"
-            line += "Active Members: " + str(rpcjson_platform['body']['team']['members']) + "\n"
-            #line += "Networks: " + str(rpcjson_platform_networks_list['body']['networks']) + "\n"
-            for list_network in rpcjson_platform_networks_list['body']['networks']:
-                networks_one_message = []
-                networks_one_message.append(list_network)
-                for list_tunnel in list_network['tunnels']:
-                    tunnels_one_message = []
-                    tunnels_one_message.append(list_tunnel)
-                print(tunnels_one_message)
-            print(networks_one_message)
-                #client.chat_postMessage(channel=channel_id, text=tunnels_one_message)
-            #client.chat_postMessage(channel=channel_id, text=networks_one_message)
-
-
-
-        client.chat_postMessage(channel=channel_id, text=line)
+        return_url = data.get('response_url')
+        whois_internal_thread = threading.Thread(target=whois_internal, args=(tenant, channel_id, return_url))
+        whois_internal_thread.start()
         return Response(), 200
-
+        
 if __name__ == "__main__":
 	app.run(host="0.0.0.0",debug=True)
