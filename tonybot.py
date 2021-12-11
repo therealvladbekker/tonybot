@@ -2,7 +2,7 @@ import hmac
 import hashlib
 import time
 import slack
-import json
+#import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -21,12 +21,12 @@ client = slack.WebClient(token=os.environ['SLACK_TOKEN'])
 BOT_ID = client.api_call("auth.test")['user_id']
 bearertoken = os.environ['BEARER_TOKEN']
 
-def pp_json(json_thing, sort=False, indents=4):
-    if type(json_thing) is str:
-        return str(json.dumps(json.loads(json_thing), sort_keys=sort, indent=indents))
-    else:
-        return str(json.dumps(json_thing, sort_keys=sort, indent=indents))
-    return None
+# def pp_json(json_thing, sort=False, indents=4):
+#     if type(json_thing) is str:
+#         return str(json.dumps(json.loads(json_thing), sort_keys=sort, indent=indents))
+#     else:
+#         return str(json.dumps(json_thing, sort_keys=sort, indent=indents))
+#     return None
 
 def verify_request(request):
     SIGNING_SECRET = os.environ['SIGNING_SECRET']
@@ -52,34 +52,47 @@ def verify_request(request):
     else:
         print("Verification failed. Signature invalid.")
         return False
+#
+# def getNetworkFromJarvis(network, url, bearertoken):
+#     json_header = {}
+#     json_header['Authorization'] = bearertoken
+#     json_header['Accept'] = 'application/json'
+#     json_header['Content-Type'] = 'application/json'
+#
+#     data_derived = '{"networkId": ' + '"' + network + '"}'
+#     response = requests.post(url, headers=json_header, data=data_derived)
+#     if response.status_code == 200:
+#         return True, response.json()
+#     else:
+#         return False, f'Error: {response.text} {response.status_code}'
+#
+# def getFromJarvis(tenant, url, bearertoken):
+#     json_header = {}
+#     json_header['Authorization'] = bearertoken
+#     json_header['Accept'] = 'application/json'
+#     json_header['Content-Type'] = 'application/json'
+#
+#     data_derived = '{"customerId": ' + '"' + tenant + '"}'
+#     response = requests.post(url, headers=json_header, data=data_derived)
+#     if response.status_code == 200:
+#         return True, response.json()
+#     else:
+#         return False, f'Error: {response.text} {response.status_code}'
 
-def getNetworkFromJarvis(network, url, bearertoken):
+
+def getFromJarvis(key, value, url, bearertoken):
     json_header = {}
     json_header['Authorization'] = bearertoken
     json_header['Accept'] = 'application/json'
     json_header['Content-Type'] = 'application/json'
-    
-    #data_derived = {"customerId":tenant}
-    data_derived = '{"networkId": ' + '"' + network + '"}'
-    response = requests.post(url, headers=json_header, data=data_derived)
-    if response.status_code == 200:
-        return True, response.json()
-    else:
-        return False, f'Error: {response.text} {response.status_code}'
 
-def getFromJarvis(tenant, url, bearertoken):
-    json_header = {}
-    json_header['Authorization'] = bearertoken
-    json_header['Accept'] = 'application/json'
-    json_header['Content-Type'] = 'application/json'
-    
-    #data_derived = {"customerId":tenant}
     data_derived = '{"customerId": ' + '"' + tenant + '"}'
     response = requests.post(url, headers=json_header, data=data_derived)
     if response.status_code == 200:
         return True, response.json()
     else:
         return False, f'Error: {response.text} {response.status_code}'
+
 
 def getAccountInfoJarvis(tenant):
     url = 'https://api.perimeter81.com/api/jarvis/customer/header'
