@@ -171,6 +171,8 @@ def whois_internal(tenant,channel_id, return_url):
     #Do environment page next
 
     final_slack_message += rpcjson_output + "\n"
+    final_slack_message += "ARR: " + str(rpcjson_general['body']['arr']) + "\n"
+
 
     environment_output = ''
     environment_output += '\n'.join(f'{k} : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True )
@@ -183,7 +185,7 @@ def whois_internal(tenant,channel_id, return_url):
     line += "Salesforce: " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + rpcjson['body'][
         'salesforceAccountId'] + "/view" + "\n"
     line += "Workspace: " + rpcjson['body']['workspace'] + "\n"
-    line += "ARR: " + str(rpcjson_general['body']['arr']) + "\n"
+
     line += "Active Members: " + str(rpcjson_platform['body']['team']['members']) + "\n"
     network_ids = ''
     network_attributes = ''
