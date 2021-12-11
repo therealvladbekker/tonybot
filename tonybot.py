@@ -93,15 +93,6 @@ def getAccountInfoJarvis(tenant):
     #print(response)
     return Response(), 200
 
-@slack_event_adapter.on('message')
-def message(payload):
-	event = payload.get('event', {})
-	channel_id = event.get('channel')
-	user_id = event.get('user')
-	text = event.get('text')
-	if BOT_ID != user_id:
-		client.chat_postMessage(channel=channel_id, text=text)
-
 @app.route('/whoami', methods=['POST'])
 def whoami():
 	data = request.form
@@ -114,11 +105,6 @@ def whoami():
 	client.chat_postMessage(channel=channel_id, text=text)
 	return Response(), 200
 
-
-@app.route('/slow', methods=['POST'])
-def slow():
-    time.sleep(5)
-    return Response(),200
 
 def whois_internal(tenant,channel_id, return_url):
     """function for doing the actual work in a thread"""
