@@ -53,34 +53,20 @@ def verify_request(request):
         print("Verification failed. Signature invalid.")
         return False
 #
-# def getNetworkFromJarvis(network, url, bearertoken):
-#     json_header = {}
-#     json_header['Authorization'] = bearertoken
-#     json_header['Accept'] = 'application/json'
-#     json_header['Content-Type'] = 'application/json'
-#
-#     data_derived = '{"networkId": ' + '"' + network + '"}'
-#     response = requests.post(url, headers=json_header, data=data_derived)
-#     if response.status_code == 200:
-#         return True, response.json()
-#     else:
-#         return False, f'Error: {response.text} {response.status_code}'
-#
-# def getFromJarvis(tenant, url, bearertoken):
-#     json_header = {}
-#     json_header['Authorization'] = bearertoken
-#     json_header['Accept'] = 'application/json'
-#     json_header['Content-Type'] = 'application/json'
-#
-#     data_derived = '{"customerId": ' + '"' + tenant + '"}'
-#     response = requests.post(url, headers=json_header, data=data_derived)
-#     if response.status_code == 200:
-#         return True, response.json()
-#     else:
-#         return False, f'Error: {response.text} {response.status_code}'
+def getNetworkFromJarvis(network, url, bearertoken):
+    json_header = {}
+    json_header['Authorization'] = bearertoken
+    json_header['Accept'] = 'application/json'
+    json_header['Content-Type'] = 'application/json'
 
+    data_derived = '{"networkId": ' + '"' + network + '"}'
+    response = requests.post(url, headers=json_header, data=data_derived)
+    if response.status_code == 200:
+        return True, response.json()
+    else:
+        return False, f'Error: {response.text} {response.status_code}'
 
-def getFromJarvis(key, value, url, bearertoken):
+def getFromJarvis(tenant, url, bearertoken):
     json_header = {}
     json_header['Authorization'] = bearertoken
     json_header['Accept'] = 'application/json'
@@ -93,18 +79,18 @@ def getFromJarvis(key, value, url, bearertoken):
     else:
         return False, f'Error: {response.text} {response.status_code}'
 
-
-def getAccountInfoJarvis(tenant):
-    url = 'https://api.perimeter81.com/api/jarvis/customer/header'
-    json_header = {}
-    json_header['Authorization'] = bearertoken
-    json_header['Accept'] = 'application/json'
-    json_header['Content-Type'] = 'application/json'
-
-    data_derived = '{"customerId": ' + '"' + tenant + '"}'
-    response = requests.post(url, headers=json_header, data=data_derived)
-    #print(response)
-    return Response(), 200
+# def getFromJarvis(key, value, url, bearertoken):
+#     json_header = {}
+#     json_header['Authorization'] = bearertoken
+#     json_header['Accept'] = 'application/json'
+#     json_header['Content-Type'] = 'application/json'
+#
+#     data_derived = '{"customerId": ' + '"' + value + '"}'
+#     response = requests.post(url, headers=json_header, data=data_derived)
+#     if response.status_code == 200:
+#         return True, response.json()
+#     else:
+#         return False, f'Error: {response.text} {response.status_code}'
 
 @app.route('/whoami', methods=['POST'])
 def whoami():
