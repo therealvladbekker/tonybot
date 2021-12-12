@@ -9,6 +9,7 @@ from flask import Flask, request, Response
 from slackeventsapi import SlackEventAdapter
 import requests
 import threading
+import random
 
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -74,6 +75,12 @@ def whoami():
     client.chat_postMessage(channel=channel_id, text=text)
     return Response(), 200
 
+def get_quote():
+
+    all_quotes = open('tony_quotes.txt', 'r')
+    quotes_lines = all_quotes.readlines()
+    return random.choice(quotes_lines)
+
 def whois_internal(tenant_name, channel_id, return_url):
     # function for doing the actual work in a thread
 
@@ -97,21 +104,22 @@ def whois_internal(tenant_name, channel_id, return_url):
     if not status:
         client.chat_postMessage(channel=channel_id, text=rpcjson_customer_environment)
 
-    final_slack_message = ''
+    final_slack_message = get_quote()
+    final_slack_message += "\n"
 
-    rpcjson_output = "If we can't protect the Earth, you can be damn well sure we'll avenge it! " + "\n"
-    rpcjson_output += "You are requesting information regarding account: " + tenant_name + "\n"
-    rpcjson_output += " " + "\n"
-    rpcjson_output += '\n'.join(f'{k} : {v}' for k, v in rpcjson['body'].items())
+    rpcjson_output = ''
+    rpcjson_output += "Here is what we know about : " + tenant_name + "\n"
+    #rpcjson_output += " " + "\n"
+    rpcjson_output += '\n'.join(f'*{k}* : {v}' for k, v in rpcjson['body'].items())
 
     # TODO We need to look output order
     # rpcjson_output += '\n'.join(f'{k} : {v}' for k,v in rpcjson['body'].items() if k in ['companyName', 'accountManager', 'customerSuccessEngineer', 'country', 'plan'])
 
     final_slack_message += rpcjson_output + "\n"
-    final_slack_message += "ARR: " + str(rpcjson_general['body']['arr']) + "\n"
+    final_slack_message += "*ARR:* " + str(rpcjson_general['body']['arr']) + "\n"
 
     environment_output = '\n'.join(
-        f'{k} : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True)
+        f'*{k}* : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True)
 
     final_slack_message += environment_output + "\n"
 
@@ -127,45 +135,58 @@ def whois_internal(tenant_name, channel_id, return_url):
     network_map = ''
 
     for network_stanza in rpcjson_platform_networks_list['body']['networks']:
-        network_map += "Network: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
+
+        network_map += "*Network*: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
             f'( {k} : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
 
-        status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],
-                                                                     'platform/network/more', bearertoken)
+        status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],'platform/network/more', bearertoken)
+        subnet = rpcjson_platform_network_more['body']['subnet']
         for region in rpcjson_platform_network_more['body']['regions']:
-            network_map += " ¬ " + "Region: " + region['name'] + "\n"
+            network_map += "\n"
+            network_map += " ¬ " + "*Region*: " + region['name'] + "\n"
             for instance in region['instances']:
-                network_map += "   ¬ " + "Instance: " + instance['ip'] + " " + region['provider']['type'] + " " + \
+                network_map += "     ¬ " + "*Instance*: " + instance['ip'] + " " + region['provider']['type'] + " " + \
                                region['provider']['region'] + "\n"
                 for tunnel in instance['tunnels']:
                     if tunnel['type'] == "ipsec":
-                        network_map += "     ¬ " + "Tunnel: " + tunnel['interfaceName'] + " " + instance['ip'] + str(
-                            tunnel['leftSubnets']) + " <> " + str(tunnel['rightSubnets']) + " " + tunnel[
-                                           'right'] + " " + tunnel['type'] + "\n"
+                        network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + instance['ip'] + " <> " + tunnel['right'] + " " + tunnel['type'] + "\n"
+                        for subnet in tunnel['rightSubnets']:
+                            network_map += "             ¬ " + "*Security Association*: " + str(tunnel['leftSubnets'][0]) + " <> " + subnet + "\n"
+                        network_map += "\n"
+
                     if tunnel['type'] == "connector":
-                        network_map += "     ¬ " + "Tunnel: " + tunnel['interfaceName'] + " " + instance['ip'] + " " + \
-                                       rpcjson_platform_network_more['body']['subnet'] + " <> " + str(
-                            tunnel['leftAllowedIP']) + " " + tunnel['leftEndpoint'] + " " + tunnel['type'] + "\n"
+                        network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + instance['ip'] + " <> " + tunnel['leftEndpoint'] + " " + tunnel['type'] + "\n"
+                        for allowedIP in tunnel['leftAllowedIP']:
+                            network_map += "             ¬ " + "*Security Association*: " + subnet + " <> " + allowedIP + "\n"
+                        network_map += "\n"
+
                     if tunnel['type'] == "openvpn":
-                        network_map += "     ¬ " + "Tunnel: " + tunnel['interfaceName'] + " " + tunnel['type'] + "\n"
+                        network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + tunnel['type'] + "\n"
         network_map += '\n'  # needed for formatting
 
     final_slack_message += network_map + "\n"
     client.chat_postMessage(channel=channel_id, text=final_slack_message)
-
 
 @app.route('/whois', methods=['POST'])
 def whois():
     if not verify_request(request):
         return ('caller not verified', 403)
     data = request.form
-    tenant = data.get('text')
+    tenant = str(data.get('text').lower())
     channel_id = data.get('channel_id')
     return_url = data.get('response_url')
     whois_internal_thread = threading.Thread(target=whois_internal, args=(tenant, channel_id, return_url))
     whois_internal_thread.start()
     return Response(), 200
 
+@slack_event_adapter.on('message')
+def message(payload):
+	event = payload.get('event', {})
+	channel_id = event.get('channel')
+	user_id = event.get('user')
+	text = event.get('text')
+	if BOT_ID != user_id:
+		client.chat_postMessage(channel=channel_id, text=text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True)
