@@ -1,7 +1,7 @@
 import hmac
 import hashlib
-import time
 import slack
+import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -10,6 +10,7 @@ from slackeventsapi import SlackEventAdapter
 import requests
 import threading
 import random
+import time
 
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -63,6 +64,16 @@ def getFromJarvis(data_derived, resource, bearertoken):
     else:
         return False, f'Error: {response.text} {response.status_code}'
 
+def getFromJarvis2(data_derived, resource, bearertoken):
+    headers = {'Authorization': bearertoken, 'Accept': 'application/json', 'Content-Type': 'application/json'}
+    response = requests.post(f'https://api.perimeter81.com/api/jarvis/customers/{resource}', headers=headers,
+                             data=data_derived)
+    if response.status_code == 200:
+        return True, response.json()
+    else:
+        return False, f'Error: {response.text} {response.status_code}'
+
+
 @app.route('/whoami', methods=['POST'])
 def whoami():
     data = request.form
@@ -80,6 +91,29 @@ def get_quote():
     all_quotes = open('tony_quotes.txt', 'r')
     quotes_lines = all_quotes.readlines()
     return random.choice(quotes_lines)
+
+@app.route('/bad', methods=['POST'])
+def myAccountsInBadStanding():
+    data = request.form
+    channel_id = data.get('channel_id')
+    data_derived = '{"filters": {"healthStatus": ["At Risk", "Need Attention"]},"options": {"sort": {"fieldName": "firstPaymentDate", "direction": -1}}}'
+    #data_derived = '{"filters":{"companyName":"*","firstPaymentDate":"*","nextBillingDate":"*","firstInvoiceAt":"*","tmUtilized":{"from":"*","to":"*"},"psUtilized":{"from":"*","to":"*"},"appsUtilized":{"from":"*","to":"*"},"plan":"*","billingCycle":"*","status":["Active","Non Renewing"],"companySize":"*","country":"*","industry":"*","partnerType":"*","poc":"*","region":"*","customerSuccessEngineer":"*","accountManager":"*","coupons.name":"*","coupons.type":"*","coupons.duration":"*","qbr.occurredDate":"*","qbr.sentiment":"*","qbr.isExist":"*","isTestTenant":false,"arr":{"from":"*","to":"*"},"mau":{"from":"*","to":"*"},"npsScore":{"from":"*","to":"*"},"openTickets":{"from":"*","to":"*"},"csatChatScore":{"from":"*","to":"*"},"csatTicketScore":{"from":"*","to":"*"},"healthStatus":"*","healthPoint":{"from":"*","to":"*"},"paymentType":"*"},"options":{"sort":{"fieldName":"firstPaymentDate","direction":-1}}}'
+    paginate = 'list?page=1&limit=100'
+    #paginate = 'list?limit=100'
+
+
+    response = getFromJarvis2(data_derived, paginate, bearertoken)
+    customers = {}
+    customers = (response[1]['body']['data'])
+    #print(type(customers))
+    bad_state_accounts = ''
+    for customer in customers:
+        #print(type(customer))
+        bad_state_accounts += customer['customerId'] + "\t\t\t\t\t\t" + customer['healthStatus'] + "\t\t\t" + customer['accountManager'] + "\t\t\t" + str(customer['arr']) + "\t\t\t" + customer['customerSuccessEngineer'] + "\n"
+
+    client.chat_postMessage(channel=channel_id, text=bad_state_accounts)
+
+    return Response(), 200
 
 def whois_internal(tenant_name, channel_id, return_url):
     # function for doing the actual work in a thread
@@ -118,8 +152,7 @@ def whois_internal(tenant_name, channel_id, return_url):
     final_slack_message += rpcjson_output + "\n"
     final_slack_message += "*ARR:* " + str(rpcjson_general['body']['arr']) + "\n"
 
-    environment_output = '\n'.join(
-        f'*{k}* : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True)
+    environment_output = '\n'.join(f'*{k}* : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True)
 
     final_slack_message += environment_output + "\n"
 
@@ -137,6 +170,7 @@ def whois_internal(tenant_name, channel_id, return_url):
     if not isinstance(rpcjson_platform_networks_list['body']['networks'], bool):
 
         for network_stanza in rpcjson_platform_networks_list['body']['networks']:
+            # TODO Create links for networkID and gateways to Grafana
             network_map += "*Network*: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
                 f'( *{k}* : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
 
@@ -169,6 +203,7 @@ def whois_internal(tenant_name, channel_id, return_url):
         network_map += "There are no networks on this tenant"
 
     final_slack_message += network_map + "\n"
+
     client.chat_postMessage(channel=channel_id, text=final_slack_message)
 
 @app.route('/whois', methods=['POST'])
