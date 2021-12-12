@@ -134,35 +134,39 @@ def whois_internal(tenant_name, channel_id, return_url):
 
     network_map = ''
 
-    for network_stanza in rpcjson_platform_networks_list['body']['networks']:
+    if not isinstance(rpcjson_platform_networks_list['body']['networks'], bool):
 
-        network_map += "*Network*: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
-            f'( {k} : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
+        for network_stanza in rpcjson_platform_networks_list['body']['networks']:
+            network_map += "*Network*: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
+                f'( *{k}* : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
 
-        status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],'platform/network/more', bearertoken)
-        subnet = rpcjson_platform_network_more['body']['subnet']
-        for region in rpcjson_platform_network_more['body']['regions']:
-            network_map += "\n"
-            network_map += " ¬ " + "*Region*: " + region['name'] + "\n"
-            for instance in region['instances']:
-                network_map += "     ¬ " + "*Instance*: " + instance['ip'] + " " + region['provider']['type'] + " " + \
-                               region['provider']['region'] + "\n"
-                for tunnel in instance['tunnels']:
-                    if tunnel['type'] == "ipsec":
-                        network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + instance['ip'] + " <> " + tunnel['right'] + " " + tunnel['type'] + "\n"
-                        for subnet in tunnel['rightSubnets']:
-                            network_map += "             ¬ " + "*Security Association*: " + str(tunnel['leftSubnets'][0]) + " <> " + subnet + "\n"
-                        network_map += "\n"
+            status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],'platform/network/more', bearertoken)
+            subnet = rpcjson_platform_network_more['body']['subnet']
+            for region in rpcjson_platform_network_more['body']['regions']:
+                network_map += "\n"
+                network_map += " ¬ " + "*Region*: " + region['name'] + "\n"
+                for instance in region['instances']:
+                    network_map += "     ¬ " + "*Instance*: " + instance['ip'] + " " + region['provider']['type'] + " " + \
+                                   region['provider']['region'] + "\n"
+                    for tunnel in instance['tunnels']:
+                        if tunnel['type'] == "ipsec":
+                            network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + instance['ip'] + " <> " + tunnel['right'] + " " + tunnel['type'] + "\n"
+                            for subnet in tunnel['rightSubnets']:
+                                network_map += "             ¬ " + "*Security Association*: " + str(tunnel['leftSubnets'][0]) + " <> " + subnet + "\n"
+                            network_map += "\n"
 
-                    if tunnel['type'] == "connector":
-                        network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + instance['ip'] + " <> " + tunnel['leftEndpoint'] + " " + tunnel['type'] + "\n"
-                        for allowedIP in tunnel['leftAllowedIP']:
-                            network_map += "             ¬ " + "*Security Association*: " + subnet + " <> " + allowedIP + "\n"
-                        network_map += "\n"
+                        if tunnel['type'] == "connector":
+                            network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + instance['ip'] + " <> " + tunnel['leftEndpoint'] + " " + tunnel['type'] + "\n"
+                            for allowedIP in tunnel['leftAllowedIP']:
+                                network_map += "             ¬ " + "*Security Association*: " + subnet + " <> " + allowedIP + "\n"
+                            network_map += "\n"
 
-                    if tunnel['type'] == "openvpn":
-                        network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + tunnel['type'] + "\n"
-        network_map += '\n'  # needed for formatting
+                        if tunnel['type'] == "openvpn":
+                            network_map += "         ¬ " + "*Tunnel*: " + tunnel['interfaceName'] + " " + tunnel['type'] + "\n"
+            network_map += '\n'  # needed for formatting
+
+    else:
+        network_map += "There are no networks on this tenant"
 
     final_slack_message += network_map + "\n"
     client.chat_postMessage(channel=channel_id, text=final_slack_message)
