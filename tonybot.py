@@ -1,7 +1,6 @@
 import hmac
 import hashlib
 import slack
-import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -9,7 +8,7 @@ from flask import Flask, request, Response
 from slackeventsapi import SlackEventAdapter
 import requests
 import threading
-import random
+import random   
 import time
 
 env_path = Path('.') / '.env'
