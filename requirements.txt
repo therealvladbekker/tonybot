@@ -1,6 +1,8 @@
-dotenv
+python-dotenv
 flask
 slackeventsapi
 requests
 slack
-
+paramiko
+rich
+slackclient

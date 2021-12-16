@@ -10,6 +10,12 @@ import requests
 import threading
 import random   
 import time
+import paramiko
+from paramiko import SSHClient, AutoAddPolicy
+from rich import pretty, inspect
+import subprocess
+import json
+
 
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -217,6 +223,47 @@ def whois():
     whois_internal_thread.start()
     return Response(), 200
 
+def showwireguard_internal(gateway_id, channel_id, return_url):
+    # function for doing the actual work in a thread
+
+    pretty.install()
+    ssh_client = SSHClient()
+    #Load keys
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ip = '131.226.33.188'
+    ssh_client.connect(ip, username='vlad',key_filename='vladp81.pem', port=44040)
+
+    #list_files = subprocess.run(["ls", "-l"])
+    #list_files = subprocess.run(["ls", "-l"])
+
+    #return Response(), 200
+
+    stdin, stdout, stderr  = ssh_client.exec_command('sudo wg show')
+    print(stdout)
+    #print(stdout.readlines())
+    #
+    final_slack_message = "This will show you status of `wg show` on this gateway" + "\n"
+    final_slack_message += str(stdout.readlines())
+    client.chat_postMessage(channel=channel_id, text=final_slack_message)
+
+    ssh_client.close()
+
+    #
+    return Response(), 200
+
+
+@app.route('/showwireguard', methods=['POST'])
+def showwireguard():
+    if not verify_request(request):
+        return ('caller not verified', 403)
+    data = request.form
+    gateway_id = str(data.get('text'))
+    channel_id = data.get('channel_id')
+    return_url = data.get('response_url')
+    whois_internal_thread = threading.Thread(target=showwireguard_internal, args=(gateway_id, channel_id, return_url))
+    whois_internal_thread.start()
+    return Response(), 200
+
 @slack_event_adapter.on('message')
 def message(payload):
 	event = payload.get('event', {})
@@ -227,4 +274,5 @@ def message(payload):
 		client.chat_postMessage(channel=channel_id, text=text)
 
 if __name__ == "__main__":
+    #app.run(host="192.168.5.97", debug=True)
     app.run(host="0.0.0.0", debug=True)
