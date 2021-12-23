@@ -1,6 +1,6 @@
 import hmac
 import hashlib
-import slack
+from slack_sdk import WebClient
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -11,15 +11,22 @@ import threading
 import random   
 import time
 
-env_path = Path('.') / '.env'
+env_path = Path('.') / 'env'
 load_dotenv(dotenv_path=env_path)
 
 app = Flask(__name__)
 slack_event_adapter = SlackEventAdapter(os.environ['SIGNING_SECRET'], '/slack/events', app)
-
-client = slack.WebClient(token=os.environ['SLACK_TOKEN'])
+client = WebClient(token=os.environ['SLACK_TOKEN'])
 BOT_ID = client.api_call("auth.test")['user_id']
 bearertoken = os.environ['BEARER_TOKEN']
+
+def get_secret(secret_name:str) -> str:
+    # Try to read from env, if you fail get the secret from AWS secret manager (use boto3)
+    try:
+        os.environ[secret_name]
+    except Exception:
+        pass
+        #call boto and fetch the secrets
 
 def verify_request(request):
     SIGNING_SECRET = os.environ['SIGNING_SECRET']
@@ -46,6 +53,9 @@ def verify_request(request):
         print("Verification failed. Signature invalid.")
         return False
 
+def searchJarvis():
+    return True
+
 def getNetworkFromJarvis(network_id, resource, bearertoken):
     data_derived = '{"networkId": ' + '"' + network_id + '"}'
     return getFromJarvis(data_derived, resource, bearertoken)
@@ -55,23 +65,26 @@ def getGeneralFromJarvis(tenant_name, resource, bearertoken):
     return getFromJarvis(data_derived, resource, bearertoken)
 
 def getFromJarvis(data_derived, resource, bearertoken):
+
+    def url_builder(resource):
+        resources = []
+        if isinstance(resource, str):
+            resources.append(resource)
+        elif isinstance(resource, list):
+            resources = resource
+        else:
+            raise ValueError(f'{type(resource)} is not supported')
+        resources = [x.lower() for x in resources]
+        print(f'https://api.perimeter81.com/api/jarvis/{"/".join(resources)}')
+        return f'https://api.perimeter81.com/api/jarvis/{"/".join(resources)}'
+
+
     headers = {'Authorization': bearertoken, 'Accept': 'application/json', 'Content-Type': 'application/json'}
-    response = requests.post(f'https://api.perimeter81.com/api/jarvis/customer/{resource}', headers=headers,
-                             data=data_derived)
+    response = requests.post(url_builder(resource), headers=headers,data=data_derived)
     if response.status_code == 200:
         return True, response.json()
     else:
-        return False, f'Error: {response.text} {response.status_code}'
-
-def getFromJarvis2(data_derived, resource, bearertoken):
-    headers = {'Authorization': bearertoken, 'Accept': 'application/json', 'Content-Type': 'application/json'}
-    response = requests.post(f'https://api.perimeter81.com/api/jarvis/customers/{resource}', headers=headers,
-                             data=data_derived)
-    if response.status_code == 200:
-        return True, response.json()
-    else:
-        return False, f'Error: {response.text} {response.status_code}'
-
+        return False, response.status_code
 
 @app.route('/whoami', methods=['POST'])
 def whoami():
@@ -91,49 +104,41 @@ def get_quote():
     quotes_lines = all_quotes.readlines()
     return random.choice(quotes_lines)
 
-@app.route('/bad', methods=['POST'])
-def myAccountsInBadStanding():
-    data = request.form
-    channel_id = data.get('channel_id')
-    data_derived = '{"filters": {"healthStatus": ["At Risk", "Need Attention"]},"options": {"sort": {"fieldName": "firstPaymentDate", "direction": -1}}}'
-    #data_derived = '{"filters":{"companyName":"*","firstPaymentDate":"*","nextBillingDate":"*","firstInvoiceAt":"*","tmUtilized":{"from":"*","to":"*"},"psUtilized":{"from":"*","to":"*"},"appsUtilized":{"from":"*","to":"*"},"plan":"*","billingCycle":"*","status":["Active","Non Renewing"],"companySize":"*","country":"*","industry":"*","partnerType":"*","poc":"*","region":"*","customerSuccessEngineer":"*","accountManager":"*","coupons.name":"*","coupons.type":"*","coupons.duration":"*","qbr.occurredDate":"*","qbr.sentiment":"*","qbr.isExist":"*","isTestTenant":false,"arr":{"from":"*","to":"*"},"mau":{"from":"*","to":"*"},"npsScore":{"from":"*","to":"*"},"openTickets":{"from":"*","to":"*"},"csatChatScore":{"from":"*","to":"*"},"csatTicketScore":{"from":"*","to":"*"},"healthStatus":"*","healthPoint":{"from":"*","to":"*"},"paymentType":"*"},"options":{"sort":{"fieldName":"firstPaymentDate","direction":-1}}}'
-    paginate = 'list?page=1&limit=100'
-    #paginate = 'list?limit=100'
-
-
-    response = getFromJarvis2(data_derived, paginate, bearertoken)
-    customers = {}
-    customers = (response[1]['body']['data'])
-    #print(type(customers))
-    bad_state_accounts = ''
-    for customer in customers:
-        #print(type(customer))
-        bad_state_accounts += customer['customerId'] + "\t\t\t\t\t\t" + customer['healthStatus'] + "\t\t\t" + customer['accountManager'] + "\t\t\t" + str(customer['arr']) + "\t\t\t" + customer['customerSuccessEngineer'] + "\n"
-
-    client.chat_postMessage(channel=channel_id, text=bad_state_accounts)
-
-    return Response(), 200
-
 def whois_internal(tenant_name, channel_id, return_url):
     # function for doing the actual work in a thread
 
-    status, rpcjson = getGeneralFromJarvis(tenant_name, 'header', bearertoken)
-    if not status:
-        client.chat_postMessage(channel=channel_id, text=rpcjson)
+    status, rpcjson = getGeneralFromJarvis(tenant_name, ['customer','header'], bearertoken)
+    if rpcjson == 500:
+        #client.chat_postMessage(channel=channel_id, text="we have to call search")
+        search_input = '{"filter": ' + '"' + tenant_name + '"}'
+        search_results = ''
+        response = getFromJarvis(search_input, ['customers','search'], bearertoken)
+        for result in response[1]['body']['accounts']:
+            search_results += "  ¬ " + str(result['customerId']) + " (" + str(result['companyName']) + ") " + "\n"
+        if not search_results:
+            client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name")
+        else:
+            client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name, but here are some similar results:\n")
+            client.chat_postMessage(channel=channel_id, text=search_results)
 
-    status, rpcjson_general = getGeneralFromJarvis(tenant_name, 'general', bearertoken)
+    elif not status:
+        client.chat_postMessage(channel=channel_id, text="Something went wrong, please check your input" + str(rpcjson))
+
+    else:
+        pass
+    status, rpcjson_general = getGeneralFromJarvis(tenant_name, ['customer','general'], bearertoken)
     if not status:
         client.chat_postMessage(channel=channel_id, text=rpcjson_general)
 
-    status, rpcjson_platform = getGeneralFromJarvis(tenant_name, 'platform', bearertoken)
+    status, rpcjson_platform = getGeneralFromJarvis(tenant_name, ['customer','platform'], bearertoken)
     if not status:
         client.chat_postMessage(channel=channel_id, text=rpcjson_platform)
 
-    status, rpcjson_platform_networks_list = getGeneralFromJarvis(tenant_name, 'platform/networks/list', bearertoken)
+    status, rpcjson_platform_networks_list = getGeneralFromJarvis(tenant_name, ['customer','platform','networks','list'], bearertoken)
     if not status:
         client.chat_postMessage(channel=channel_id, text=rpcjson_platform_network_list)
 
-    status, rpcjson_customer_environment = getGeneralFromJarvis(tenant_name, 'environment', bearertoken)
+    status, rpcjson_customer_environment = getGeneralFromJarvis(tenant_name, ['customer','environment'], bearertoken)
     if not status:
         client.chat_postMessage(channel=channel_id, text=rpcjson_customer_environment)
 
@@ -150,19 +155,17 @@ def whois_internal(tenant_name, channel_id, return_url):
 
     final_slack_message += rpcjson_output + "\n"
     final_slack_message += "*ARR:* " + str(rpcjson_general['body']['arr']) + "\n"
+    final_slack_message += "*Active Members*: " + str(rpcjson_platform['body']['team']['members']) + "\n"
+    #TODO This needs a check for empty salesforceAccountId
+    final_slack_message += "*Salesforce:* " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + rpcjson['body']['salesforceAccountId'] + "/view" + "\n"
+    final_slack_message += "*Company Size:* " + rpcjson['body']['companySize'] + "\n"
+    final_slack_message += "*Country:* " + rpcjson['body']['country'] + "\n"
+    final_slack_message += "*Plan:* " + rpcjson['body']['plan'] + "\n"
+    #final_slack_message += "Workspace: " + rpcjson['body']['workspace'] + "\n"
 
     environment_output = '\n'.join(f'*{k}* : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True)
 
     final_slack_message += environment_output + "\n"
-
-    # TODO Come back here to fix the URL generation for SF and workspace
-    line = "Salesforce: " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + rpcjson['body'][
-        'salesforceAccountId'] + "/view" + "\n"
-    line += "Company Size: " + rpcjson['body']['companySize'] + "\n"
-    line += "Country: " + rpcjson['body']['country'] + "\n"
-    line += "Plan: " + rpcjson['body']['plan'] + "\n"
-    line += "Workspace: " + rpcjson['body']['workspace'] + "\n"
-    line += "Active Members: " + str(rpcjson_platform['body']['team']['members']) + "\n"
 
     network_map = ''
 
@@ -207,6 +210,7 @@ def whois_internal(tenant_name, channel_id, return_url):
 
 @app.route('/whois', methods=['POST'])
 def whois():
+    print("GOT HERE")
     if not verify_request(request):
         return ('caller not verified', 403)
     data = request.form
@@ -217,6 +221,14 @@ def whois():
     whois_internal_thread.start()
     return Response(), 200
 
+
+@app.route('/slack/events', methods=['POST'])
+
+@app.route('/whatever', methods=['POST'])
+def whatever():
+    print("GOT HERE")
+    return "good"
+
 @slack_event_adapter.on('message')
 def message(payload):
 	event = payload.get('event', {})
@@ -224,7 +236,7 @@ def message(payload):
 	user_id = event.get('user')
 	text = event.get('text')
 	if BOT_ID != user_id:
-		client.chat_postMessage(channel=channel_id, text=text)
+	    client.chat_postMessage(channel=channel_id, text=text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True)

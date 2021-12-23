@@ -1,6 +1,7 @@
-dotenv
+python-dotenv
 flask
 slackeventsapi
 requests
 slack
-
+slackclient
+slack_sdk
