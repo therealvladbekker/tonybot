@@ -1,35 +1,22 @@
 import hmac
 import hashlib
 from slack_sdk import WebClient
-import os
-from pathlib import Path
-from dotenv import load_dotenv
 from flask import Flask, request, Response
 from slackeventsapi import SlackEventAdapter
 import requests
 import threading
 import random   
 import time
-
-env_path = Path('.') / 'env'
-load_dotenv(dotenv_path=env_path)
+from utils import get_secret
 
 app = Flask(__name__)
-slack_event_adapter = SlackEventAdapter(os.environ['SIGNING_SECRET'], '/slack/events', app)
-client = WebClient(token=os.environ['SLACK_TOKEN'])
+slack_event_adapter = SlackEventAdapter(get_secret('SIGNING_SECRET'), '/slack/events', app)
+client = WebClient(token=get_secret('SLACK_TOKEN'))
 BOT_ID = client.api_call("auth.test")['user_id']
-bearertoken = os.environ['BEARER_TOKEN']
-
-def get_secret(secret_name:str) -> str:
-    # Try to read from env, if you fail get the secret from AWS secret manager (use boto3)
-    try:
-        os.environ[secret_name]
-    except Exception:
-        pass
-        #call boto and fetch the secrets
+bearertoken = get_secret('BEARER_TOKEN')
 
 def verify_request(request):
-    SIGNING_SECRET = os.environ['SIGNING_SECRET']
+    SIGNING_SECRET = get_secret('SIGNING_SECRET')
     # Convert your signing secret to bytes
     slack_signing_secret = bytes(SIGNING_SECRET, "utf-8")
     request_body = request.get_data().decode()
@@ -75,21 +62,15 @@ def getFromJarvis(data_derived, resource, bearertoken):
         else:
             raise ValueError(f'{type(resource)} is not supported')
         resources = [x.lower() for x in resources]
-        print(f'https://api.perimeter81.com/api/jarvis/{"/".join(resources)}')
         return f'https://api.perimeter81.com/api/jarvis/{"/".join(resources)}'
-
 
     headers = {'Authorization': bearertoken, 'Accept': 'application/json', 'Content-Type': 'application/json'}
     response = requests.post(url_builder(resource), headers=headers,data=data_derived)
-    if response.status_code == 200:
-        return True, response.json()
-    else:
-        return False, response.status_code
+    return response.status_code == 200, response.json()
 
 @app.route('/whoami', methods=['POST'])
 def whoami():
     data = request.form
-    # print(data)
     user_id = data.get('user_id')
     channel_id = data.get('channel_id')
     user_name = data.get('user_name')
@@ -104,43 +85,42 @@ def get_quote():
     quotes_lines = all_quotes.readlines()
     return random.choice(quotes_lines)
 
+def error_formatter(error_dict):
+
+    return "We received a " + str(error_dict['statusCode']) + " from datasource: " + str(error_dict['message'])
+
 def whois_internal(tenant_name, channel_id, return_url):
     # function for doing the actual work in a thread
-
-    status, rpcjson = getGeneralFromJarvis(tenant_name, ['customer','header'], bearertoken)
-    if rpcjson == 500:
-        #client.chat_postMessage(channel=channel_id, text="we have to call search")
+    success, data = getGeneralFromJarvis(tenant_name, ['customer','header'], bearertoken)
+    if not success:
         search_input = '{"filter": ' + '"' + tenant_name + '"}'
         search_results = ''
-        response = getFromJarvis(search_input, ['customers','search'], bearertoken)
-        for result in response[1]['body']['accounts']:
-            search_results += "  ¬ " + str(result['customerId']) + " (" + str(result['companyName']) + ") " + "\n"
+        success, data = getFromJarvis(search_input, ['customers','search'], bearertoken)
+        print(data)
+        for result in data['body']['accounts']:
+            individual_result_string = "  ¬ " + str(result['customerId']) + " (" + str(result['companyName']) + ") " + "\n"
+            search_results += individual_result_string.replace(tenant_name, '＊'+tenant_name+'＊')
         if not search_results:
             client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name")
         else:
             client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name, but here are some similar results:\n")
             client.chat_postMessage(channel=channel_id, text=search_results)
 
-    elif not status:
-        client.chat_postMessage(channel=channel_id, text="Something went wrong, please check your input" + str(rpcjson))
-
-    else:
-        pass
     status, rpcjson_general = getGeneralFromJarvis(tenant_name, ['customer','general'], bearertoken)
     if not status:
-        client.chat_postMessage(channel=channel_id, text=rpcjson_general)
+        client.chat_postMessage(channel=channel_id, text=error_formatter(rpcjson_general))
 
     status, rpcjson_platform = getGeneralFromJarvis(tenant_name, ['customer','platform'], bearertoken)
     if not status:
-        client.chat_postMessage(channel=channel_id, text=rpcjson_platform)
+        client.chat_postMessage(channel=channel_id, text=error_formatter(rpcjson_platform))
 
     status, rpcjson_platform_networks_list = getGeneralFromJarvis(tenant_name, ['customer','platform','networks','list'], bearertoken)
     if not status:
-        client.chat_postMessage(channel=channel_id, text=rpcjson_platform_network_list)
+        client.chat_postMessage(channel=channel_id, text=error_formatter(rpcjson_platform_networks_list))
 
     status, rpcjson_customer_environment = getGeneralFromJarvis(tenant_name, ['customer','environment'], bearertoken)
     if not status:
-        client.chat_postMessage(channel=channel_id, text=rpcjson_customer_environment)
+        client.chat_postMessage(channel=channel_id, text=error_formatter(rpcjson_customer_environment))
 
     final_slack_message = get_quote()
     final_slack_message += "\n"
@@ -148,20 +128,20 @@ def whois_internal(tenant_name, channel_id, return_url):
     rpcjson_output = ''
     rpcjson_output += "Here is what we know about : " + tenant_name + "\n"
     #rpcjson_output += " " + "\n"
-    rpcjson_output += '\n'.join(f'*{k}* : {v}' for k, v in rpcjson['body'].items())
+    rpcjson_output += '\n'.join(f'*{k}* : {v}' for k, v in data['body'].items())
 
     # TODO We need to look output order
-    # rpcjson_output += '\n'.join(f'{k} : {v}' for k,v in rpcjson['body'].items() if k in ['companyName', 'accountManager', 'customerSuccessEngineer', 'country', 'plan'])
+    # rpcjson_output += '\n'.join(f'{k} : {v}' for k,v in data_or_status_code['body'].items() if k in ['companyName', 'accountManager', 'customerSuccessEngineer', 'country', 'plan'])
 
     final_slack_message += rpcjson_output + "\n"
     final_slack_message += "*ARR:* " + str(rpcjson_general['body']['arr']) + "\n"
     final_slack_message += "*Active Members*: " + str(rpcjson_platform['body']['team']['members']) + "\n"
     #TODO This needs a check for empty salesforceAccountId
-    final_slack_message += "*Salesforce:* " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + rpcjson['body']['salesforceAccountId'] + "/view" + "\n"
-    final_slack_message += "*Company Size:* " + rpcjson['body']['companySize'] + "\n"
-    final_slack_message += "*Country:* " + rpcjson['body']['country'] + "\n"
-    final_slack_message += "*Plan:* " + rpcjson['body']['plan'] + "\n"
-    #final_slack_message += "Workspace: " + rpcjson['body']['workspace'] + "\n"
+    final_slack_message += "*Salesforce:* " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + data['body']['salesforceAccountId'] + "/view" + "\n"
+    final_slack_message += "*Company Size:* " + data['body']['companySize'] + "\n"
+    final_slack_message += "*Country:* " + data['body']['country'] + "\n"
+    final_slack_message += "*Plan:* " + data['body']['plan'] + "\n"
+    #final_slack_message += "Workspace: " + data_or_status_code['body']['workspace'] + "\n"
 
     environment_output = '\n'.join(f'*{k}* : {v}' for k, v in rpcjson_customer_environment['body']['featureAdoption'].items() if v == True)
 
@@ -175,8 +155,11 @@ def whois_internal(tenant_name, channel_id, return_url):
             # TODO Create links for networkID and gateways to Grafana
             network_map += "*Network*: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
                 f'( *{k}* : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
+            print(network_stanza['networkId'])
+            status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],['customer','platform','network','more'], bearertoken)
+            if not status:
+                client.chat_postMessage(channel=channel_id, text=error_formatter(rpcjson_platform_network_more))
 
-            status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],'platform/network/more', bearertoken)
             subnet = rpcjson_platform_network_more['body']['subnet']
             for region in rpcjson_platform_network_more['body']['regions']:
                 network_map += "\n"
@@ -223,6 +206,7 @@ def whois():
 
 
 @app.route('/slack/events', methods=['POST'])
+#This exists for Slack to verify our server in the slack api web UI
 
 @app.route('/whatever', methods=['POST'])
 def whatever():
@@ -231,12 +215,12 @@ def whatever():
 
 @slack_event_adapter.on('message')
 def message(payload):
-	event = payload.get('event', {})
-	channel_id = event.get('channel')
-	user_id = event.get('user')
-	text = event.get('text')
-	if BOT_ID != user_id:
-	    client.chat_postMessage(channel=channel_id, text=text)
+    event = payload.get('event', {})
+    channel_id = event.get('channel')
+    user_id = event.get('user')
+    text = event.get('text')
+    if BOT_ID != user_id:
+        client.chat_postMessage(channel=channel_id, text=text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True)
