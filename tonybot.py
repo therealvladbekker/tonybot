@@ -8,8 +8,20 @@ import threading
 import random   
 import time
 from utils import get_secret
+import watchtower, logging
+
 
 app = Flask(__name__)
+
+logger = logging.getLogger(__name__)
+logger.propagate = False
+logger.setLevel(logging.INFO)
+
+handler = watchtower.CloudWatchLogHandler()
+logger.addHandler(handler)
+
+#logging.basicConfig(level=logging.INFO)
+
 slack_event_adapter = SlackEventAdapter(get_secret('SIGNING_SECRET'), '/slack/events', app)
 client = WebClient(token=get_secret('SLACK_TOKEN'))
 BOT_ID = client.api_call("auth.test")['user_id']
@@ -25,6 +37,7 @@ def verify_request(request):
     # Check that the request is no more than 60 seconds old
     if (int(time.time()) - int(slack_request_timestamp)) > 60:
         print("Verification failed. Request is out of date.")
+        logger.INFO('"Verification failed. Request is out of date."')
         return False
     # Create a basestring by concatenating the version, the request  
     # timestamp, and the request body
@@ -38,6 +51,8 @@ def verify_request(request):
         return True
     else:
         print("Verification failed. Signature invalid.")
+        logger.info('Verification failed. Signature invalid.')
+
         return False
 
 def searchJarvis():
@@ -91,20 +106,38 @@ def error_formatter(error_dict):
 
 def whois_internal(tenant_name, channel_id, return_url):
     # function for doing the actual work in a thread
+    tenant_name = tenant_name.replace("*","")
+    #print(tenant_name)
     success, data = getGeneralFromJarvis(tenant_name, ['customer','header'], bearertoken)
     if not success:
+        #tenant_name = tenant_name.replace("*","")
         search_input = '{"filter": ' + '"' + tenant_name + '"}'
+        #print(search_input)
         search_results = ''
         success, data = getFromJarvis(search_input, ['customers','search'], bearertoken)
-        print(data)
-        for result in data['body']['accounts']:
-            individual_result_string = "  ¬ " + str(result['customerId']) + " (" + str(result['companyName']) + ") " + "\n"
-            search_results += individual_result_string.replace(tenant_name, '＊'+tenant_name+'＊')
-        if not search_results:
-            client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name")
+        if success:
+            #print(success)
+            #print(data)
+
+            for idx,result in enumerate(data['body']['accounts'],1):
+                #TODO How can I make this respect capital letters too?
+                customer_id = result['customerId']
+                customer_id = customer_id.replace(tenant_name, '＊'+tenant_name+'＊', 1)
+                company_name = result['companyName']
+                company_name = company_name.replace(tenant_name, '＊'+tenant_name+'＊', 1)
+
+                individual_result_string = "  ¬ " + customer_id + " (" + company_name + ") " + "\n"
+                #print(f'{idx}) {individual_result_string}')
+                search_results += individual_result_string
+            if not search_results:
+                client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name")
+            else:
+                client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name, but here are some similar results:\n")
+                client.chat_postMessage(channel=channel_id, text=search_results)
+                exit()
         else:
-            client.chat_postMessage(channel=channel_id, text="I was unable to locate any account with that name, but here are some similar results:\n")
-            client.chat_postMessage(channel=channel_id, text=search_results)
+            pass
+            # TODO - let the user know we failed
 
     status, rpcjson_general = getGeneralFromJarvis(tenant_name, ['customer','general'], bearertoken)
     if not status:
@@ -134,9 +167,17 @@ def whois_internal(tenant_name, channel_id, return_url):
     # rpcjson_output += '\n'.join(f'{k} : {v}' for k,v in data_or_status_code['body'].items() if k in ['companyName', 'accountManager', 'customerSuccessEngineer', 'country', 'plan'])
 
     final_slack_message += rpcjson_output + "\n"
+    print(rpcjson_general)
+    logger.info(rpcjson_general)
+
+    print(rpcjson_general['body']['arr'])
+    logger.info(rpcjson_general['body']['arr'])
+
     final_slack_message += "*ARR:* " + str(rpcjson_general['body']['arr']) + "\n"
     final_slack_message += "*Active Members*: " + str(rpcjson_platform['body']['team']['members']) + "\n"
+
     #TODO This needs a check for empty salesforceAccountId
+
     final_slack_message += "*Salesforce:* " + "https://perimeter81.lightning.force.com/lightning/r/Account/" + data['body']['salesforceAccountId'] + "/view" + "\n"
     final_slack_message += "*Company Size:* " + data['body']['companySize'] + "\n"
     final_slack_message += "*Country:* " + data['body']['country'] + "\n"
@@ -156,6 +197,8 @@ def whois_internal(tenant_name, channel_id, return_url):
             network_map += "*Network*: " + network_stanza['networkName'] + " " + network_stanza['networkId'] + " " + ' '.join(
                 f'( *{k}* : {v} )' for k, v in network_stanza['attributes'].items() if v == True) + "\n"
             print(network_stanza['networkId'])
+            logger.info(network_stanza['networkId'])
+
             status, rpcjson_platform_network_more = getNetworkFromJarvis(network_stanza['networkId'],['customer','platform','network','more'], bearertoken)
             if not status:
                 client.chat_postMessage(channel=channel_id, text=error_formatter(rpcjson_platform_network_more))
@@ -193,11 +236,12 @@ def whois_internal(tenant_name, channel_id, return_url):
 
 @app.route('/whois', methods=['POST'])
 def whois():
-    print("GOT HERE")
+    #print("GOT HERE")
     if not verify_request(request):
         return ('caller not verified', 403)
     data = request.form
-    tenant = str(data.get('text').lower())
+    #tenant = str(data.get('text').lower())
+    tenant = str(data.get('text').strip().lower())
     channel_id = data.get('channel_id')
     return_url = data.get('response_url')
     whois_internal_thread = threading.Thread(target=whois_internal, args=(tenant, channel_id, return_url))
@@ -208,10 +252,6 @@ def whois():
 @app.route('/slack/events', methods=['POST'])
 #This exists for Slack to verify our server in the slack api web UI
 
-@app.route('/whatever', methods=['POST'])
-def whatever():
-    print("GOT HERE")
-    return "good"
 
 @slack_event_adapter.on('message')
 def message(payload):
@@ -224,3 +264,4 @@ def message(payload):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True)
+    #app.run(host="192.168.5.41", debug=True)
