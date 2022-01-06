@@ -12,6 +12,8 @@ RUN pip install -r requirements.txt
 
 COPY tonybot.py .
 
+COPY utils.py .
+
 #CMD ["python", "tonybot.py"]
 
 ENV FLASK_APP="tonybot.py"
