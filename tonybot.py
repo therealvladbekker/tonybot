@@ -232,11 +232,13 @@ def whois_internal(tenant_name, channel_id, return_url):
 
     final_slack_message += network_map + "\n"
 
-    client.chat_postMessage(channel=channel_id, text=final_slack_message)
+    client.chat_postMessage(channel=channel_id, text=final_slack_message, filename='moving_to_aws.txt')
+
 
 @app.route('/whois', methods=['POST'])
 def whois():
     #print("GOT HERE")
+
     if not verify_request(request):
         return ('caller not verified', 403)
     data = request.form

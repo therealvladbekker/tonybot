@@ -6,6 +6,12 @@ from botocore.exceptions import ClientError
 
 
 def get_secret(secret_name:str) -> str:
+    # Get environment variables
+    are_we_using_secret_manager = True
+    if not are_we_using_secret_manager:
+        return os.getenv(secret_name)
+    #   return os.environ.get(secret_name)
+
     region_name = "us-east-1"
 
     session = boto3.session.Session()
